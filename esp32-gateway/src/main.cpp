@@ -1,26 +1,83 @@
 #include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiUdp.h>
+#include <SPI.h>
+#include <ArduinoJson.h>
 
-// Most ESP32 DevKits have the internal LED on GPIO 2
-#define LED_PIN 2
+#define CS_PIN 5
+
+const auto ssid = "Lolkek";
+const auto password = "happyplum876";
+const auto macIp = "192.168.1.241";
+const auto port = 1234;
+WiFiUDP udp;
+
+struct __attribute__((packed)) WeatherData {
+    float temp;
+    float hum;
+    uint32_t ts;
+};
+
+JsonDocument get_json(WeatherData* data);
 
 void setup() {
-  // 1. Start Serial communication so we can talk to the Mac
   Serial.begin(115200);
+  pinMode(CS_PIN, OUTPUT);
+  digitalWrite(CS_PIN, HIGH);
   
-  // 2. Tell the ESP32 that Pin 2 is an OUTPUT (a "pusher" of electricity)
-  pinMode(LED_PIN, OUTPUT);
-  
-  Serial.println("ESP32 System Booted. Starting Blink...");
+  SPI.begin(18, 19, 23, 5); 
+  Serial.println("Weather Station Master Active...");
+
+  WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+  Serial.println("\nConnected to WiFi!");
 }
 
 void loop() {
-  // 3. Turn the LED ON (High voltage / 3.3V)
-  digitalWrite(LED_PIN, HIGH);
-  Serial.println("LED is ON (Logic H)");
-  delay(500); // Wait for 0.5 seconds
+    WeatherData incoming;
+    uint8_t* ptr = (uint8_t*)&incoming;
 
-  // 4. Turn the LED OFF (Low voltage / 0V)
-  digitalWrite(LED_PIN, LOW);
-  Serial.println("LED is OFF (Logic L)");
-  delay(500); // Wait for 0.5 seconds
+    SPI.beginTransaction(SPISettings(10000, MSBFIRST, SPI_MODE0));
+    digitalWrite(CS_PIN, LOW);
+    delayMicroseconds(50);
+
+    for(int i = 0; i < sizeof(WeatherData); i++) {
+        ptr[i] = SPI.transfer(0x00);
+    }
+
+    digitalWrite(CS_PIN, HIGH);
+    SPI.endTransaction();
+    
+    JsonDocument doc = get_json(&incoming);
+
+    char output[128];
+    serializeJson(doc, output);
+
+    udp.beginPacket(macIp, port); 
+    udp.print(output);
+    udp.endPacket();
+
+    Serial.print("Sent UDP: ");
+    Serial.println(output);
+
+    delay(1000);
+}
+
+JsonDocument get_json(WeatherData* data) {
+    JsonDocument doc;
+
+    auto temp = data->temp;
+    auto hum = data->hum;
+    auto ts = data->ts;
+
+    doc["temp"] = temp;
+    doc["hum"] = hum;
+    doc["ts"] = ts;
+
+    // Serial.printf("T: %.2f | H: %.2f | TS: %u\n", temp, hum, ts);
+
+    return doc;
 }
