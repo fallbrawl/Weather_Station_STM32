@@ -113,18 +113,17 @@ int main(void)
   /* USER CODE BEGIN 2 */
     uint8_t config_data[1];
 
-    // Register 0xF4: Control Measurement
-    // 0x27 means: 
-    // [Temperature Oversampling x1] + [Pressure Oversampling x1] + [Normal Mode]
+    uint8_t hum_reg = 0x01;
+    HAL_I2C_Mem_Write(&hi2c1, (0x76 << 1), 0xF2, 1, &hum_reg, 1, 100);
+
     config_data[0] = 0x27; 
 
-    // We use Mem_Write to send the setting to the chip
     if (HAL_I2C_Mem_Write(&hi2c1, (0x76 << 1), 0xF4, I2C_MEMADD_SIZE_8BIT, config_data, 1, 100) == HAL_OK) {
         HAL_UART_Transmit(&huart2, (uint8_t*)"Sensor Woken Up!\r\n", 18, 100);
     }
+    
     uint8_t calib[6];
     if (HAL_I2C_Mem_Read(&hi2c1, (0x76 << 1), 0x88, I2C_MEMADD_SIZE_8BIT, calib, 6, 100) == HAL_OK) {
-        // Combine the pairs of 8-bit registers into 16-bit values
         dig_T1 = (uint16_t)(calib[1] << 8 | calib[0]);
         dig_T2 = (int16_t)(calib[3] << 8 | calib[2]);
         dig_T3 = (int16_t)(calib[5] << 8 | calib[4]);
@@ -160,6 +159,7 @@ while (1) {
         send_telemetry(final_temp, final_hum);
         HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5); 
     }
+    // HAL_Delay(500);
 }
 }
 /**
@@ -176,7 +176,6 @@ void SystemClock_Config(void)
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE2);
 
-  // Initializes the RCC Oscillators 
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
@@ -191,8 +190,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
