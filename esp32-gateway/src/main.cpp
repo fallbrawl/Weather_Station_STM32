@@ -1,34 +1,20 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include "WeatherProtocol.h"
 #include <SPI.h>
-#include <ArduinoJson.h>
 
-#define CS_PIN 5
-
-const auto ssid = "Lolkek";
-const auto password = "happyplum876";
-const auto macIp = "192.168.1.241";
-const auto port = 1234;
 WiFiUDP udp;
-
-struct __attribute__((packed)) WeatherData {
-    float temp;
-    float hum;
-    uint32_t ts;
-};
-
-JsonDocument get_json(WeatherData* data);
 
 void setup() {
   Serial.begin(115200);
-  pinMode(CS_PIN, OUTPUT);
-  digitalWrite(CS_PIN, HIGH);
+  pinMode(Config::CS_PIN, OUTPUT);
+  digitalWrite(Config::CS_PIN, HIGH);
   
-  SPI.begin(18, 19, 23, 5); 
+  SPI.begin(Config::SCK, Config::MISO, Config::MOSI, Config::CS_PIN); 
   Serial.println("Weather Station Master Active...");
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(Config::SSID, Config::PASS);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
@@ -38,27 +24,12 @@ void setup() {
 
 void loop() {
     WeatherData incoming;
-    uint8_t* ptr = (uint8_t*)&incoming;
-
-    SPI.beginTransaction(SPISettings(10000, MSBFIRST, SPI_MODE0));
-    digitalWrite(CS_PIN, LOW);
-    delayMicroseconds(50);
-
-    for(int i = 0; i < sizeof(WeatherData); i++) {
-        ptr[i] = SPI.transfer(0x00);
-    }
-
-    digitalWrite(CS_PIN, HIGH);
-    SPI.endTransaction();
+    fetchSpiData(incoming);
     
     JsonDocument doc = get_json(&incoming);
-
     char output[128];
-    serializeJson(doc, output);
 
-    udp.beginPacket(macIp, port); 
-    udp.print(output);
-    udp.endPacket();
+    send_udp_message(doc, output);
 
     Serial.print("Sent UDP: ");
     Serial.println(output);
@@ -66,18 +37,33 @@ void loop() {
     delay(1000);
 }
 
+void fetchSpiData(WeatherData& data) {
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(Config::CS_PIN, LOW);
+    
+    uint8_t* ptr = (uint8_t*)&data;
+    for(size_t i = 0; i < sizeof(WeatherData); i++) {
+        ptr[i] = SPI.transfer(0x00);
+    }
+    
+    digitalWrite(Config::CS_PIN, HIGH);
+    SPI.endTransaction();
+}
+
 JsonDocument get_json(WeatherData* data) {
     JsonDocument doc;
 
-    auto temp = data->temp;
-    auto hum = data->hum;
-    auto ts = data->ts;
-
-    doc["temp"] = temp;
-    doc["hum"] = hum;
-    doc["ts"] = ts;
-
-    // Serial.printf("T: %.2f | H: %.2f | TS: %u\n", temp, hum, ts);
+    doc["temp"] = data->temp;
+    doc["hum"] = data->hum;
+    doc["ts"] = data->ts;
 
     return doc;
+}
+
+void send_udp_message(const JsonDocument& doc, char *output) {
+    serializeJson(doc, output, 128);
+
+    udp.beginPacket(Config::DEST_IP, Config::PORT); 
+    udp.print(output);
+    udp.endPacket();
 }

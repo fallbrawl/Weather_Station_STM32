@@ -11,7 +11,7 @@ int main(int argc, char *argv[]) {
 
     engine.rootContext()->setContextProperty("weatherBackend", &weatherData);
 
-    const QUrl url(QStringLiteral("qrc:/qt/qml/main.qml"));
+    const auto url(QStringLiteral("qrc:/qt/qml/main.qml"));
     engine.load(url);
 
     return app.exec();
