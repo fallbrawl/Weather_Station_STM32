@@ -1,69 +1,72 @@
-#include <Arduino.h>
-#include <WiFi.h>
-#include <WiFiUdp.h>
 #include "WeatherProtocol.h"
-#include <SPI.h>
+#include "driver/spi_master.h"
+#include "nvs_flash.h"
+#include "esp_log.h"
+#include "lwip/sockets.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
-WiFiUDP udp;
+static const char *TAG = "MAIN_APP";
+spi_device_handle_t spi_handle;
 
-void setup() {
-  Serial.begin(115200);
-  pinMode(Config::CS_PIN, OUTPUT);
-  digitalWrite(Config::CS_PIN, HIGH);
-  
-  SPI.begin(Config::SCK, Config::MISO, Config::MOSI, Config::CS_PIN); 
-  Serial.println("Weather Station Master Active...");
+void init_spi() {
+    spi_bus_config_t buscfg = {
+        .mosi_io_num = Config::MOSI,
+        .miso_io_num = Config::MISO,
+        .sclk_io_num = Config::SCK,
+        .quadwp_io_num = -1, .quadhd_io_num = -1,
+    };
+    spi_device_interface_config_t devcfg = {
+        .mode = 0, .clock_speed_hz = 1000000,
+        .spics_io_num = Config::CS_PIN, .queue_size = 7,
+    };
+    spi_bus_initialize(HSPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
+    spi_bus_add_device(HSPI_HOST, &devcfg, &spi_handle);
+}
 
-  WiFi.begin(Config::SSID, Config::PASS);
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
+void weather_task(void *pvParameters) {
+    WeatherData data;
+    
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_addr.s_addr = inet_addr(Config::DEST_IP);
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(Config::PORT);
+
+    while (1) {
+        spi_transaction_t t = {};
+        t.length = sizeof(WeatherData) * 8;
+        t.rx_buffer = &data;
+        spi_device_transmit(spi_handle, &t);
+
+        JsonDocument doc;
+        doc["temp"] = data.temp;
+        doc["hum"] = data.hum;
+        doc["ts"] = data.ts;
+
+        char buffer[128];
+        auto n = serializeJson(doc, buffer, sizeof(buffer));
+
+        auto sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+        if (sock >= 0) {
+            sendto(sock, buffer, n, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+            close(sock);
+            ESP_LOGI(TAG, "Sent UDP: %s", buffer);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
-  Serial.println("\nConnected to WiFi!");
 }
 
-void loop() {
-    WeatherData incoming;
-    fetchSpiData(incoming);
-    
-    JsonDocument doc = get_json(&incoming);
-    char output[128];
-
-    send_udp_message(doc, output);
-
-    Serial.print("Sent UDP: ");
-    Serial.println(output);
-
-    delay(1000);
-}
-
-void fetchSpiData(WeatherData& data) {
-    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-    digitalWrite(Config::CS_PIN, LOW);
-    
-    uint8_t* ptr = (uint8_t*)&data;
-    for(size_t i = 0; i < sizeof(WeatherData); i++) {
-        ptr[i] = SPI.transfer(0x00);
+extern "C" void app_main(void) {
+    auto ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
     }
-    
-    digitalWrite(Config::CS_PIN, HIGH);
-    SPI.endTransaction();
-}
+    ESP_ERROR_CHECK(ret);
 
-JsonDocument get_json(WeatherData* data) {
-    JsonDocument doc;
+    wifi_init_sta();
+    init_spi();
 
-    doc["temp"] = data->temp;
-    doc["hum"] = data->hum;
-    doc["ts"] = data->ts;
-
-    return doc;
-}
-
-void send_udp_message(const JsonDocument& doc, char *output) {
-    serializeJson(doc, output, 128);
-
-    udp.beginPacket(Config::DEST_IP, Config::PORT); 
-    udp.print(output);
-    udp.endPacket();
+    xTaskCreatePinnedToCore(weather_task, "weather_task", 4096, NULL, 5, NULL, 1);
 }

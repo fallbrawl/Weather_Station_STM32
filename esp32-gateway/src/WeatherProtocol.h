@@ -1,7 +1,7 @@
 #ifndef WEATHER_PROTOCOL_H
 #define WEATHER_PROTOCOL_H
 
-#include <Arduino.h>
+#include <stdint.h>
 #include <ArduinoJson.h>
 
 struct __attribute__((packed)) WeatherData {
@@ -13,7 +13,7 @@ struct __attribute__((packed)) WeatherData {
 namespace Config {
     const char* const SSID = "Lolkek";
     const char* const PASS = "";
-    const char* const DEST_IP = "192.168.1.241";
+    const char* const DEST_IP = "192.168.1.129";
     const uint16_t PORT = 1234;
     
     const uint8_t CS_PIN = 5;
@@ -22,8 +22,7 @@ namespace Config {
     const uint8_t MOSI = 23;
 }
 
-JsonDocument get_json(WeatherData* data);
-void send_udp_message(const JsonDocument& doc, char* output);
-void fetchSpiData(WeatherData& data);
+void wifi_init_sta(void);
+void init_spi(void);
 
 #endif
